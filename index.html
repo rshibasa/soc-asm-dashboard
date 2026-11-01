@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SOC Operations & ASM Recon Dashboard</title>
+  <!-- Tailwind CSS CDN (純粋なSPA配信用) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0d1117; color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .soc-card { background-color: #161b22; border: 1px solid #30363d; border-radius: 0.5rem; }
+    .soc-input { background-color: #0d1117; border: 1px solid #30363d; color: #f0f6fc; }
+    .soc-input:focus { border-color: #58a6ff; outline: none; }
+    .badge { font-size: 0.75rem; padding: 0.15rem 0.45rem; border-radius: 0.25rem; }
+  </style>
+</head>
+<body class="p-4 md:p-6 min-h-screen">
+
+  <!-- ヘッダー -->
+  <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 mb-6 border-b border-gray-700">
+    <div>
+      <h1 class="text-xl md:text-2xl font-bold text-white flex items-center gap-2">
+        <span class="inline-block w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></span>
+        SOC Operations & Group ASM Dashboard
+      </h1>
+      <p class="text-xs text-gray-400 mt-1">
+        Client-Side Only | No External Tracking | Data stored in LocalStorage
+      </p>
+    </div>
+    <div class="mt-3 md:mt-0 flex items-center gap-4 text-xs font-mono">
+      <div class="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
+        <span class="text-gray-400">JST:</span> <span id="clock-jst" class="text-emerald-400 font-bold">--:--:--</span>
+      </div>
+      <div class="bg-gray-800 px-3 py-1.5 rounded border border-gray-700">
+        <span class="text-gray-400">UTC:</span> <span id="clock-utc" class="text-blue-400 font-bold">--:--:--</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- タブ切り替えナビゲーション -->
+  <nav class="flex space-x-2 border-b border-gray-800 mb-6 pb-2">
+    <button onclick="switchTab('recon')" id="tab-btn-recon" class="tab-btn px-4 py-2 text-sm font-semibold rounded bg-blue-600 text-white">OSINT & ASM 調査</button>
+    <button onclick="switchTab('early-warning')" id="tab-btn-early-warning" class="tab-btn px-4 py-2 text-sm font-semibold rounded text-gray-400 hover:text-white hover:bg-gray-800">早期警戒・CVSS</button>
+    <button onclick="switchTab('asm-ledger')" id="tab-btn-asm-ledger" class="tab-btn px-4 py-2 text-sm font-semibold rounded text-gray-400 hover:text-white hover:bg-gray-800">グループ資産スタック台帳</button>
+    <button onclick="switchTab('analyst-tools')" id="tab-btn-analyst-tools" class="tab-btn px-4 py-2 text-sm font-semibold rounded text-gray-400 hover:text-white hover:bg-gray-800">解析ツールベルト</button>
+    <button onclick="switchTab('incident')" id="tab-btn-incident" class="tab-btn px-4 py-2 text-sm font-semibold rounded text-gray-400 hover:text-white hover:bg-gray-800">初動チェック & メモ</button>
+  </nav>
+
+  <!-- TAB 1: OSINT & ASM 調査 -->
+  <div id="tab-recon" class="tab-content space-y-6">
+    <!-- OSINT 入力・判定バー -->
+    <div class="soc-card p-5">
+      <h2 class="text-base font-bold text-white mb-2 flex items-center gap-2">
+        <span>🔍</span> 対象エンティティ一括トリアージ (IP / Domain / Hash / CVE)
+      </h2>
+      <div class="flex flex-col md:flex-row gap-2 mt-3">
+        <input type="text" id="target-input" placeholder="例: 198.51.100.1, sub.example.com, 44d88612fea8a8f36de82e1278abb02f, CVE-2024-XXXX" 
+               class="soc-input w-full px-4 py-2 text-sm rounded focus:ring-1 focus:ring-blue-500 font-mono">
+        <div class="flex gap-2">
+          <button onclick="detectAndGenerateLinks()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded text-sm font-semibold whitespace-nowrap">リンク生成</button>
+          <button onclick="openAllApplicableTools()" class="bg-gray-700 hover:bg-gray-600 text-gray-200 px-4 py-2 rounded text-sm whitespace-nowrap" title="判定された主要ツールをまとめて別タブで開く">一括展開</button>
+        </div>
+      </div>
+      <div class="mt-2 text-xs flex gap-2 items-center">
+        <span class="text-gray-400">識別結果:</span>
+        <span id="detected-type" class="badge bg-gray-800 text-gray-300">未入力</span>
+      </div>
+    </div>
+
+    <!-- 動的生成リンク一覧 -->
+    <div class="soc-card p-5">
+      <h3 class="text-sm font-bold text-gray-300 mb-3 border-b border-gray-800 pb-2">調査エンジン・外部照合リンク</h3>
+      <div id="tools-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 text-sm">
+        <div class="text-xs text-gray-500 col-span-full">ターゲットを入力して「リンク生成」を押してください。</div>
+      </div>
+    </div>
+
+    <!-- ASM視点 推奨 Chrome 拡張機能リファレンス -->
+    <div class="soc-card p-5">
+      <h2 class="text-base font-bold text-white mb-3 flex items-center gap-2">
+        <span>🧩</span> ASM・技術スタック監視用 Chrome拡張機能ツールキット
+      </h2>
+      <p class="text-xs text-gray-400 mb-4">
+        子会社・グループ企業の公開Web資産に対して、ブラウザでアクセスした瞬間に技術構成・設定不備・露出シークレットを能動検出するための拡張機能一覧です。
+      </p>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <!-- Wappalyzer -->
+        <div class="border border-gray-800 rounded p-4 bg-gray-900 flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start">
+              <span class="font-bold text-white text-sm">Wappalyzer</span>
+              <span class="badge bg-blue-900 text-blue-200">Tech Stack</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">Webフレームワーク、CMS、Webサーバー、JSライブラリ、アナリティクスなどの稼働バージョンを即時抽出。</p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-500">主用途: ソフトウェアバージョン特定</span>
+            <a href="https://chromewebstore.google.com/detail/wappalyzer-technology-pro/gppongmhjkpfnbhagpmjfkannfbllamg" target="_blank" rel="noopener" class="text-blue-400 hover:underline">Chrome Store ↗</a>
+          </div>
+        </div>
+
+        <!-- BuiltWith -->
+        <div class="border border-gray-800 rounded p-4 bg-gray-900 flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start">
+              <span class="font-bold text-white text-sm">BuiltWith Technology Profiler</span>
+              <span class="badge bg-purple-900 text-purple-200">Infrastructure</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">DNS、ホスティング基盤、CDN（Cloudflare等）、SSLプロバイダ、過去に利用していた技術履歴まで深掘り分析。</p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-500">主用途: インフラ・基盤プロファイリング</span>
+            <a href="https://chromewebstore.google.com/detail/builtwith-technology-prof/dapjbgnjinbpoindlpdmhochffioedbn" target="_blank" rel="noopener" class="text-blue-400 hover:underline">Chrome Store ↗</a>
+          </div>
+        </div>
+
+        <!-- Lighthouse -->
+        <div class="border border-gray-800 rounded p-4 bg-gray-900 flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start">
+              <span class="font-bold text-white text-sm">Lighthouse (DevTools標準)</span>
+              <span class="badge bg-emerald-900 text-emerald-200">Standard / Built-in</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">F12開発者ツールの「Lighthouse」タブから実行。脆弱な既知ライブラリの検出やHTTPS暗号化、セキュリティ構成を監査。</p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-500">起動方法: Chrome F12 -> Lighthouse</span>
+            <span class="text-emerald-400">インストール不要</span>
+          </div>
+        </div>
+
+        <!-- Mitaka -->
+        <div class="border border-gray-800 rounded p-4 bg-gray-900 flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start">
+              <span class="font-bold text-white text-sm">Mitaka</span>
+              <span class="badge bg-yellow-900 text-yellow-200">OSINT Recon</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">ページ上のIP、ドメイン、URL、ハッシュ文字列を選択右クリックするだけでVirusTotalやShodan、crt.sh等の外部検索を一発実行。</p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-500">主用途: 右クリックOSINTハブ</span>
+            <a href="https://chromewebstore.google.com/detail/mitaka/bfjbejminaigkgjhagbfnghflgkiijgl" target="_blank" rel="noopener" class="text-blue-400 hover:underline">Chrome Store ↗</a>
+          </div>
+        </div>
+
+        <!-- TruffleHog -->
+        <div class="border border-gray-800 rounded p-4 bg-gray-900 flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start">
+              <span class="font-bold text-white text-sm">TruffleHog</span>
+              <span class="badge bg-red-900 text-red-200">Secret Scanner</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">対象Webサイトを開いた際、フロントエンドのJSコードやAPIレスポンス内に露出したAPIキーや機密トークンを検知。</p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-500">主用途: APIキー・クレデンシャル露出監査</span>
+            <a href="https://chromewebstore.google.com/detail/trufflehog/bafhdnhjnlcdbjcdcffdnkkdcbnflgbm" target="_blank" rel="noopener" class="text-blue-400 hover:underline">Chrome Store ↗</a>
+          </div>
+        </div>
+
+        <!-- ModHeader / HTTP Headers -->
+        <div class="border border-gray-800 rounded p-4 bg-gray-900 flex flex-col justify-between">
+          <div>
+            <div class="flex justify-between items-start">
+              <span class="font-bold text-white text-sm">HTTP Headers & ModHeader</span>
+              <span class="badge bg-indigo-900 text-indigo-200">Headers Inspector</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">レスポンスヘッダー（HSTS, CSP, X-Frame-Options）の欠落確認や、サーバーバージョン情報のバナー露出を即座に確認。</p>
+          </div>
+          <div class="mt-4 pt-3 border-t border-gray-800 flex justify-between items-center text-xs">
+            <span class="text-gray-500">主用途: レスポンスヘッダー設定監査</span>
+            <a href="https://chromewebstore.google.com/detail/modheader-modify-http-hea/idgpnmonknjnojddfkpgkljpfnnfcklj" target="_blank" rel="noopener" class="text-blue-400 hover:underline">Chrome Store ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: 早期警戒情報・CVSSクイックリンク -->
+  <div id="tab-early-warning" class="tab-content hidden space-y-6">
+    <div class="soc-card p-5">
+      <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>🛡️</span> 公的機関 早期警戒・脆弱性・CVSS ポータル
+          </h2>
+          <p class="text-xs text-gray-400">JPCERT/CC, IPA, CISA, FIRST CVSS Calculator への迅速なアクセス</p>
+        </div>
+        <input type="text" id="feed-filter" oninput="filterFeedLinks()" placeholder="キーワード絞り込み (例: CISA, JVNDB, 報告)" 
+               class="soc-input px-3 py-1.5 text-xs rounded w-full md:w-64 font-mono">
+      </div>
+
+      <div id="portal-links-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <!-- リンク群はJavaScriptにより動的レンダリング -->
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: グループ資産スタック台帳 (LocalStorage) -->
+  <div id="tab-asm-ledger" class="tab-content hidden space-y-6">
+    <div class="soc-card p-5">
+      <div class="flex justify-between items-center mb-4 border-b border-gray-800 pb-2">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>🏢</span> 子会社・グループ企業 Web資産スタック台帳
+          </h2>
+          <p class="text-xs text-gray-400">拡張機能（Wappalyzer等）で調査した技術スタックをLocalStorageへ記録・管理します。</p>
+        </div>
+        <button onclick="exportLedgerCsv()" class="bg-gray-800 hover:bg-gray-700 text-gray-200 px-3 py-1.5 text-xs rounded border border-gray-700">CSVエクスポート</button>
+      </div>
+
+      <!-- 登録フォーム -->
+      <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4 bg-gray-900 p-3 rounded border border-gray-800 text-xs">
+        <div>
+          <label class="block text-gray-400 mb-1">組織 / 子会社名</label>
+          <input type="text" id="ledger-org" placeholder="例: ○○子会社" class="soc-input w-full px-2 py-1.5 rounded">
+        </div>
+        <div>
+          <label class="block text-gray-400 mb-1">ドメイン / URL</label>
+          <input type="text" id="ledger-domain" placeholder="例: sub.company.co.jp" class="soc-input w-full px-2 py-1.5 rounded">
+        </div>
+        <div>
+          <label class="block text-gray-400 mb-1">検出CMS / Framework</label>
+          <input type="text" id="ledger-cms" placeholder="例: WordPress 6.4, Laravel" class="soc-input w-full px-2 py-1.5 rounded">
+        </div>
+        <div>
+          <label class="block text-gray-400 mb-1">Webサーバー / CDN</label>
+          <input type="text" id="ledger-server" placeholder="例: nginx 1.18, Cloudflare" class="soc-input w-full px-2 py-1.5 rounded">
+        </div>
+        <div class="flex flex-col justify-end">
+          <button onclick="addLedgerEntry()" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded font-semibold">台帳に追加</button>
+        </div>
+      </div>
+
+      <!-- 台帳テーブル -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left border-collapse">
+          <thead>
+            <tr class="border-b border-gray-700 text-gray-400 bg-gray-800">
+              <th class="p-2">組織名</th>
+              <th class="p-2">対象ドメイン</th>
+              <th class="p-2">CMS / フレームワーク</th>
+              <th class="p-2">サーバー / CDN</th>
+              <th class="p-2">最終確認日</th>
+              <th class="p-2 text-right">アクション</th>
+            </tr>
+          </thead>
+          <tbody id="ledger-tbody">
+            <!-- JavaScriptで動的生成 -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: アナリスト・ツールベルト -->
+  <div id="tab-analyst-tools" class="tab-content hidden space-y-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- IoC Defang / Refang -->
+      <div class="soc-card p-5">
+        <h3 class="text-sm font-bold text-gray-200 mb-2">IOC Defanger / Refanger</h3>
+        <p class="text-xs text-gray-400 mb-3">誤クリック防止用（hxxp, [.]）サニタイズおよび解除</p>
+        <textarea id="defang-input" rows="4" placeholder="URLまたはIPアドレスを入力" class="soc-input w-full p-2.5 text-xs rounded font-mono mb-3"></textarea>
+        <div class="flex gap-2">
+          <button onclick="handleDefang(true)" class="bg-gray-800 hover:bg-gray-700 text-yellow-400 px-3 py-1.5 text-xs rounded border border-gray-700">Defang (無害化)</button>
+          <button onclick="handleDefang(false)" class="bg-gray-800 hover:bg-gray-700 text-blue-400 px-3 py-1.5 text-xs rounded border border-gray-700">Refang (復元)</button>
+          <button onclick="copyToClipboard('defang-input')" class="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 text-xs rounded border border-gray-700 ml-auto">コピー</button>
+        </div>
+      </div>
+
+      <!-- Epoch タイムスタンプ変換 -->
+      <div class="soc-card p-5">
+        <h3 class="text-sm font-bold text-gray-200 mb-2">UNIX Epoch タイムスタンプ相互変換</h3>
+        <p class="text-xs text-gray-400 mb-3">秒・ミリ秒 Epoch値と JST / UTC の即時変換</p>
+        <input type="text" id="epoch-input" placeholder="例: 1715000000 または 1715000000000" class="soc-input w-full p-2 text-xs rounded font-mono mb-3">
+        <button onclick="convertEpoch()" class="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 text-xs rounded font-semibold mb-3">変換実行</button>
+        <div class="text-xs space-y-1 font-mono bg-gray-900 p-2.5 rounded border border-gray-800">
+          <div>JST: <span id="epoch-res-jst" class="text-emerald-400">---</span></div>
+          <div>UTC: <span id="epoch-res-utc" class="text-blue-400">---</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 5: 初動チェック & メモ -->
+  <div id="tab-incident" class="tab-content hidden space-y-6">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- チェックリスト -->
+      <div class="soc-card p-5">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="text-sm font-bold text-gray-200">インシデント初動トリアージ手順</h3>
+          <button onclick="resetChecklist()" class="text-xs text-red-400 hover:underline">リセット</button>
+        </div>
+        <div id="checklist-container" class="space-y-2 text-xs">
+          <!-- JSでレンダリング -->
+        </div>
+      </div>
+
+      <!-- スクラッチパッド (LocalStorage) -->
+      <div class="soc-card p-5 flex flex-col justify-between">
+        <div>
+          <div class="flex justify-between items-center mb-3">
+            <h3 class="text-sm font-bold text-gray-200">ケース調査メモ (LocalStorage 自動保存)</h3>
+            <button onclick="insertTimestamp()" class="bg-gray-800 hover:bg-gray-700 text-xs px-2 py-1 rounded text-emerald-400 border border-gray-700">+ JST時刻挿入</button>
+          </div>
+          <textarea id="case-notes" rows="12" class="soc-input w-full p-3 text-xs rounded font-mono" placeholder="調査タイムライン、抽出したIoC、一次対応ログを記録..."></textarea>
+        </div>
+        <div class="flex justify-between items-center mt-3 pt-3 border-t border-gray-800 text-xs">
+          <span id="save-status" class="text-gray-500">保存済み</span>
+          <button onclick="clearNotes()" class="text-red-400 hover:underline">メモ全消去</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- 時計更新 ---
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock-jst').textContent = now.toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour12: false });
+      document.getElementById('clock-utc').textContent = now.toLocaleTimeString('en-US', { timeZone: 'UTC', hour12: false });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // --- タブ切り替え ---
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('bg-blue-600', 'text-white');
+        btn.classList.add('text-gray-400');
+      });
+
+      document.getElementById('tab-' + tabId).classList.remove('hidden');
+      const activeBtn = document.getElementById('tab-btn-' + tabId);
+      activeBtn.classList.remove('text-gray-400');
+      activeBtn.classList.add('bg-blue-600', 'text-white');
+    }
+
+    // --- 早期警戒・ポータル一覧データ ---
+    const portalLinks = [
+      { name: "JPCERT/CC 緊急注意喚起", desc: "脆弱性の悪用が確認された緊急度の高い注意喚起", url: "https://www.jpcert.or.jp/at/", tag: "JPCERT" },
+      { name: "JPCERT/CC Weekly Report", desc: "週次の脆弱性動向・セキュリティインシデントまとめ", url: "https://www.jpcert.or.jp/wr/", tag: "JPCERT" },
+      { name: "IPA 重要なセキュリティ情報", desc: "深刻度・影響範囲の広い脆弱性アナウンス", url: "https://www.ipa.go.jp/security/security-alert/", tag: "IPA" },
+      { name: "JVN iPedia (脆弱性対策情報DB)", desc: "日本国内で報告された脆弱性識別情報", url: "https://jvndb.jvn.jp/", tag: "JVN" },
+      { name: "CISA KEV Catalog", desc: "実際に悪用が確認されている既知の脆弱性カタログ", url: "https://www.cisa.gov/known-exploited-vulnerabilities-catalog", tag: "CISA" },
+      { name: "FIRST CVSS v3.1 Calculator", desc: "CVSS v3.1 基準値・環境値の計算ツール", url: "https://www.first.org/cvss/calculator/3.1", tag: "CVSS" },
+      { name: "FIRST CVSS v4.0 Calculator", desc: "最新 CVSS v4.0 スコア評価カリキュレーター", url: "https://www.first.org/cvss/calculator/4.0", tag: "CVSS" },
+      { name: "NIST NVD", desc: "米国立標準技術研究所 CVE脆弱性総合DB", url: "https://nvd.nist.gov/vuln/search", tag: "NIST" },
+      { name: "JPCERT/CC インシデント報告受付", desc: "社外侵害等のインシデント情報提供・相談窓口", url: "https://www.jpcert.or.jp/ir/", tag: "JPCERT" }
+    ];
+
+    function renderPortalLinks(items) {
+      const container = document.getElementById('portal-links-container');
+      container.innerHTML = items.map(item => `
+        <a href="${item.url}" target="_blank" rel="noopener noreferrer" class="block p-3.5 rounded border border-gray-800 bg-gray-900 hover:border-blue-500 transition-colors">
+          <div class="flex justify-between items-start mb-1">
+            <span class="font-bold text-gray-200 text-xs">${item.name}</span>
+            <span class="badge bg-gray-800 text-gray-400 font-mono">${item.tag}</span>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">${item.desc}</p>
+        </a>
+      `).join('');
+    }
+    renderPortalLinks(portalLinks);
+
+    function filterFeedLinks() {
+      const q = document.getElementById('feed-filter').value.toLowerCase();
+      const filtered = portalLinks.filter(l => l.name.toLowerCase().includes(q) || l.desc.toLowerCase().includes(q) || l.tag.toLowerCase().includes(q));
+      renderPortalLinks(filtered);
+    }
+
+    // --- OSINT / Recon 入力判定とリンク生成 ---
+    let currentGeneratedLinks = [];
+
+    function detectTargetType(val) {
+      val = val.trim();
+      const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+      const cveRegex = /^CVE-\d{4}-\d{4,}$/i;
+      const md5Regex = /^[a-fA-F0-9]{32}$/;
+      const sha256Regex = /^[a-fA-F0-9]{64}$/;
+      const domainRegex = /^[a-zA-Z0-9][-a-zA-Z0-9]*(\.[a-zA-Z0-9][-a-zA-Z0-9]*)+$/;
+
+      if (ipv4Regex.test(val)) return 'IPv4';
+      if (cveRegex.test(val)) return 'CVE';
+      if (sha256Regex.test(val)) return 'SHA256';
+      if (md5Regex.test(val)) return 'MD5';
+      if (domainRegex.test(val) || val.startsWith('http')) return 'DOMAIN_URL';
+      return 'UNKNOWN';
+    }
+
+    function detectAndGenerateLinks() {
+      const raw = document.getElementById('target-input').value.trim();
+      const cleaned = raw.replace(/\[\.\]/g, '.').replace(/^hxxp/i, 'http');
+      const type = detectTargetType(cleaned);
+      const typeBadge = document.getElementById('detected-type');
+      typeBadge.textContent = type;
+
+      const grid = document.getElementById('tools-grid');
+      grid.innerHTML = '';
+      currentGeneratedLinks = [];
+
+      if (!cleaned) {
+        grid.innerHTML = '<div class="text-xs text-gray-500 col-span-full">ターゲットを入力してください。</div>';
+        return;
+      }
+
+      let tools = [];
+
+      // ドメイン / URL 向け（サブドメイン、SSL、スタック）
+      if (type === 'DOMAIN_URL') {
+        const domain = cleaned.replace(/^https?:\/\//i, '').split('/')[0];
+        tools = [
+          { name: "crt.sh (サブドメイン透明性)", url: `https://crt.sh/?q=%25.${domain}`, desc: "CTログからサブドメインを全件抽出" },
+          { name: "Qualys SSL Labs", url: `https://www.ssllabs.com/ssltest/analyze.html?d=${domain}&hideResults=on`, desc: "SSL/TLS暗号スイート・プロトコル監査" },
+          { name: "BuiltWith (スタック調査)", url: `https://builtwith.com/${domain}`, desc: "サーバー、CDN、フレームワーク履歴" },
+          { name: "VirusTotal (Domain)", url: `https://www.virustotal.com/gui/domain/${domain}`, desc: "脅威判定・過去のDNS解決履歴" },
+          { name: "urlscan.io", url: `https://urlscan.io/search/#${domain}`, desc: "DOMスナップショット・外部スクリプト通信" },
+          { name: "SecurityTrails", url: `https://securitytrails.com/domain/${domain}/dns`, desc: "DNS履歴とサブドメイン列挙" }
+        ];
+      } else if (type === 'IPv4') {
+        tools = [
+          { name: "VirusTotal (IP)", url: `https://www.virustotal.com/gui/ip-address/${cleaned}`, desc: "IPレピュテーション判定" },
+          { name: "AbuseIPDB", url: `https://www.abuseipdb.com/check/${cleaned}`, desc: "不正攻撃・スキャナー通報履歴" },
+          { name: "Shodan", url: `https://www.shodan.io/host/${cleaned}`, desc: "開放ポート・露出サービス・バナー" },
+          { name: "Censys Search", url: `https://search.censys.io/hosts/${cleaned}`, desc: "公開ホスト・証明書マッピング" }
+        ];
+      } else if (type === 'CVE') {
+        tools = [
+          { name: "NVD (CVE Detail)", url: `https://nvd.nist.gov/vuln/detail/${cleaned}`, desc: "CVSS公式スコア・影響範囲" },
+          { name: "JVN iPedia", url: `https://jvndb.jvn.jp/search/index.php?mode=_vulnerability_search_IA_Search&keyword=${cleaned}`, desc: "日本語による脆弱性詳細と対策" },
+          { name: "CISA KEV 照合", url: `https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext=${cleaned}`, desc: "悪用実績の有無確認" }
+        ];
+      } else if (type === 'SHA256' || type === 'MD5') {
+        tools = [
+          { name: "VirusTotal (Hash)", url: `https://www.virustotal.com/gui/file/${cleaned}`, desc: "マルチAVエンジン検知結果" },
+          { name: "MalwareBazaar", url: `https://bazaar.abuse.ch/browse.php?search=hash%3A${cleaned}`, desc: "検体サンプル照合" }
+        ];
+      } else {
+        tools = [
+          { name: "Google 検索", url: `https://www.google.com/search?q=${encodeURIComponent(cleaned)}`, desc: "Web全体検索" },
+          { name: "VirusTotal (汎用)", url: `https://www.virustotal.com/gui/search/${encodeURIComponent(cleaned)}`, desc: "IOC汎用検索" }
+        ];
+      }
+
+      currentGeneratedLinks = tools.map(t => t.url);
+
+      grid.innerHTML = tools.map(t => `
+        <a href="${t.url}" target="_blank" rel="noopener noreferrer" class="p-3 bg-gray-900 border border-gray-800 rounded hover:border-blue-500 block">
+          <div class="text-xs font-bold text-blue-400 flex justify-between">
+            ${t.name} <span>↗</span>
+          </div>
+          <div class="text-xs text-gray-400 mt-1">${t.desc}</div>
+        </a>
+      `).join('');
+    }
+
+    function openAllApplicableTools() {
+      if (!currentGeneratedLinks.length) {
+        alert("先に有効なターゲットを入力してリンクを生成してください。");
+        return;
+      }
+      currentGeneratedLinks.forEach(url => window.open(url, '_blank'));
+    }
+
+    // --- 子会社・グループ資産スタック台帳 (LocalStorage) ---
+    const STORAGE_KEY_LEDGER = "soc_asm_ledger_records";
+
+    function getLedgerData() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY_LEDGER)) || [];
+      } catch(e) { return []; }
+    }
+
+    function saveLedgerData(data) {
+      localStorage.setItem(STORAGE_KEY_LEDGER, JSON.stringify(data));
+      renderLedgerTable();
+    }
+
+    function renderLedgerTable() {
+      const records = getLedgerData();
+      const tbody = document.getElementById('ledger-tbody');
+      if (!records.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">登録された資産はありません。</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = records.map((r, i) => `
+        <tr class="border-b border-gray-800 hover:bg-gray-850">
+          <td class="p-2 font-bold text-gray-200">${escapeHtml(r.org)}</td>
+          <td class="p-2 font-mono text-blue-400"><a href="https://${escapeHtml(r.domain)}" target="_blank" rel="noopener" class="hover:underline">${escapeHtml(r.domain)} ↗</a></td>
+          <td class="p-2 text-gray-300">${escapeHtml(r.cms || '-')}</td>
+          <td class="p-2 text-gray-300">${escapeHtml(r.server || '-')}</td>
+          <td class="p-2 text-gray-400">${r.updated}</td>
+          <td class="p-2 text-right">
+            <button onclick="deleteLedgerEntry(${i})" class="text-red-400 hover:underline">削除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function addLedgerEntry() {
+      const org = document.getElementById('ledger-org').value.trim();
+      const domain = document.getElementById('ledger-domain').value.trim().replace(/^https?:\/\//i, '').split('/')[0];
+      const cms = document.getElementById('ledger-cms').value.trim();
+      const server = document.getElementById('ledger-server').value.trim();
+
+      if (!org || !domain) {
+        alert("組織名とドメインは必須項目です。");
+        return;
+      }
+
+      const records = getLedgerData();
+      records.unshift({
+        org, domain, cms, server,
+        updated: new Date().toLocaleDateString('ja-JP')
+      });
+
+      saveLedgerData(records);
+      document.getElementById('ledger-org').value = '';
+      document.getElementById('ledger-domain').value = '';
+      document.getElementById('ledger-cms').value = '';
+      document.getElementById('ledger-server').value = '';
+    }
+
+    function deleteLedgerEntry(index) {
+      const records = getLedgerData();
+      records.splice(index, 1);
+      saveLedgerData(records);
+    }
+
+    function exportLedgerCsv() {
+      const records = getLedgerData();
+      if (!records.length) return alert("出力するデータがありません。");
+      let csv = "組織名,ドメイン,CMS/Framework,サーバー/CDN,確認日\n";
+      records.forEach(r => {
+        csv += `"${r.org}","${r.domain}","${r.cms}","${r.server}","${r.updated}"\n`;
+      });
+      const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `asm_group_assets_${new Date().toISOString().slice(0,10)}.csv`;
+      a.click();
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]);
+    }
+    renderLedgerTable();
+
+    // --- アナリスト・ツールベルト ---
+    function handleDefang(isDefang) {
+      const area = document.getElementById('defang-input');
+      let val = area.value;
+      if (isDefang) {
+        val = val.replace(/\./g, '[.]').replace(/http:\/\//gi, 'hxxp://').replace(/https:\/\//gi, 'hxxps://');
+      } else {
+        val = val.replace(/\[\.\]/g, '.').replace(/hxxp:\/\//gi, 'http://').replace(/hxxps:\/\//gi, 'https://');
+      }
+      area.value = val;
+    }
+
+    function convertEpoch() {
+      const raw = document.getElementById('epoch-input').value.trim();
+      let num = parseInt(raw, 10);
+      if (isNaN(num)) return;
+      if (num < 10000000000) num *= 1000; // 秒単位ならミリ秒へ補正
+      const d = new Date(num);
+      document.getElementById('epoch-res-jst').textContent = d.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+      document.getElementById('epoch-res-utc').textContent = d.toUTCString();
+    }
+
+    function copyToClipboard(id) {
+      const text = document.getElementById(id).value;
+      navigator.clipboard.writeText(text);
+    }
+
+    // --- トリアージチェックリスト (LocalStorage) ---
+    const CHECKLIST_STORAGE_KEY = "soc_checklist_state";
+    const checklistItems = [
+      "1. アラート検知元 (EDR/IDS/WAF) と対象アセットの特定",
+      "2. 外部公開資産の技術スタック・脆弱性該当有無の確認",
+      "3. 影響範囲の隔離・ネットワーク遮断判断 (Isolate)",
+      "4. JPCERT/CC / 外部組織へのエスカレーション要否の確認",
+      "5. IOC (IP/Hash/Domain) の社内ログ横断検索 (SIEM)"
+    ];
+
+    function renderChecklist() {
+      const saved = JSON.parse(localStorage.getItem(CHECKLIST_STORAGE_KEY) || "{}");
+      const container = document.getElementById('checklist-container');
+      container.innerHTML = checklistItems.map((item, idx) => `
+        <label class="flex items-center gap-2 p-2 rounded bg-gray-900 border border-gray-800 cursor-pointer">
+          <input type="checkbox" onchange="toggleCheck(${idx})" ${saved[idx] ? 'checked' : ''} class="rounded bg-gray-850 border-gray-700 text-blue-500">
+          <span class="${saved[idx] ? 'line-through text-gray-500' : 'text-gray-300'}">${item}</span>
+        </label>
+      `).join('');
+    }
+
+    function toggleCheck(idx) {
+      const saved = JSON.parse(localStorage.getItem(CHECKLIST_STORAGE_KEY) || "{}");
+      saved[idx] = !saved[idx];
+      localStorage.setItem(CHECKLIST_STORAGE_KEY, JSON.stringify(saved));
+      renderChecklist();
+    }
+
+    function resetChecklist() {
+      localStorage.removeItem(CHECKLIST_STORAGE_KEY);
+      renderChecklist();
+    }
+    renderChecklist();
+
+    // --- メモ帳 (LocalStorage 自動保存) ---
+    const NOTES_KEY = "soc_case_scratchpad";
+    const notesArea = document.getElementById('case-notes');
+    notesArea.value = localStorage.getItem(NOTES_KEY) || "";
+
+    notesArea.addEventListener('input', () => {
+      localStorage.setItem(NOTES_KEY, notesArea.value);
+      const st = document.getElementById('save-status');
+      st.textContent = "保存完了";
+      setTimeout(() => { st.textContent = "保存済み"; }, 1500);
+    });
+
+    function insertTimestamp() {
+      const now = new Date().toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' });
+      notesArea.value += `\n[${now} JST] `;
+      localStorage.setItem(NOTES_KEY, notesArea.value);
+    }
+
+    function clearNotes() {
+      if (confirm("メモを全消去しますか？")) {
+        notesArea.value = "";
+        localStorage.removeItem(NOTES_KEY);
+      }
+    }
+  </script>
+</body>
+</html>
